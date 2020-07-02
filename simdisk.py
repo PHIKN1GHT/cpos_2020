@@ -51,7 +51,7 @@ class Superblock(object):
         inode_struct_size=32,
         block_struct_size=1024,
         dir_region_pos = 32*1024):
-        
+
         self._inode_num = inode_num
         self._block_num = block_num
         self._inode_struct_size = inode_struct_size
@@ -217,32 +217,57 @@ class INode():
      
 
 class Block(object):
-    pass
+    def __init__(self, size=1024):
+        self._bytes = bytearray(size)
+        self._size = size
+
+    def encode_into(self,btarr,offset=0):
+        struct.pack_into(str(self._size)+'s',btarr,offset,self._bytes)
+
+    @classmethod
+    def decode_from(cls,btarr,offset=0):
+        b = Block()
+        b._bytes = struct.unpack_from(str(b._size)+'s',btarr,offset)[0]
+        return b
 
 env = {}
 env['user'] = "guest"
 env['path'] = "/"
 
 class FileSystem(object):
-    def __init__(self,buffer=None):
-        if buffer:
-            self._super_block = Superblock.decode_from(buffer)
+    def __init__(self):
+        if os.path.exists('diskfile'):
+            with open('diskfile', 'rb') as df:
+                self._buffer = bytearray(df.read())
+            self._super_block = Superblock.decode_from(self._buffer)
+
             self._dirs = []
             offset = self._super_block._dir_region_pos
+            
             # 循环读目录项
             self._inodes = []
             offset = self._super_block._inode_region_pos
 
             self._blocks = []
             offset = self._super_block._block_region_pos
+            
         else:
+            self._buffer = bytearray(100 * 1024 * 1024)
             self._super_block = Superblock()
+            self._super_block.encode_into(self._buffer)
             self._dirs, self._inodes, self._blocks = [], [], []
+            # 创建根目录
+
+            # 创建用户记录表
+
+
+            self.save()
 
         self.openings = {}
 
-    def create_usertable(self):
-        pass
+    def save(self):
+        with open('diskfile', 'wb') as df:
+            df.write(self._buffer)
 
     def add_user(self):
         pass
@@ -303,17 +328,7 @@ func['copy'] = fsys.copy_file
 func['cd'] = fsys.change_dir
 func['dir'] = func['ls'] = fsys.list_dir
 
-def init():
-    if os.path.exists('diskfile'):
-        with open('diskfile', 'rb') as df:
-            buffer = bytearray(df.read())
-    else:
-        buffer = bytearray(100 * 1024 * 1024) # 100MB = 100 * 1024 * 
-        with open('diskfile', 'wb') as df:
-            df.write(buffer)
-
 def main():
-    init()
     while True:
         print("{}@simdisk {} $ ".format(env['user'], env['path']), end="")
         cmd = input().split(' ')
