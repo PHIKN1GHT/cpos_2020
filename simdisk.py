@@ -280,21 +280,9 @@ class FileSystem(object):
             self._inodes[inode_id] = inode
             self.save()
 
-            # Create User Table
-
-            # 创建用户记录表
-            #inode_id = self._super_block._inode_map.next()
-            #inode = INode('1100')
-            #self._inodes.append(inode)
-            #block_id = self._super_block._block_map.next()
-            #block = Block()
-            #self._blocks.append(block)
-
         self._openings = {}
-        self._usertable = {
-            'system': 0,
-            'guest': 1
-        }
+        self._usertable['system'] = 0
+        self._usertable['guest'] = 1
 
     def save(self):
         _buffer = bytearray(100 * 1024 * 1024)
@@ -446,7 +434,7 @@ class FileSystem(object):
         self.write_file('accounts', json.dumps(self._usertable))
         self.save()
 
-    def test_perm(self, perm):
+    def test_perm(self, name, perm):
         pass
 
     def login(self, name):
@@ -458,8 +446,19 @@ class FileSystem(object):
     def logout(self):
         env['user'] = 'guest'
 
-    def copy_file(self):
-        pass
+    def copy_file(self, src, dst):
+        exi, inode_id = self._find(src)
+        if not exi:
+            print('File not found :' + src)
+            return
+
+        exi, inode_id = self._find(dst)
+        if exi:
+            print('File already exists:' + dst)
+            return
+
+        self.create_file(dst)
+        self.write_file(dst,self.read_file(src,False))
 
     def change_dir(self):
         pass
