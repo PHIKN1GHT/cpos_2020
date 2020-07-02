@@ -41,27 +41,30 @@ class Bitmap(object):
             self._next_pos += 1
             if not self._next_pos < self._total:
                 self._next_pos -= self._total
+        self.set(self._next_pos)
         return self._next_pos
 
 class Superblock(object):
     def __init__(self,
         inode_num=102400,
-        block_num=102400,
         inode_struct_size=32,
         block_struct_size=1024,
         dir_region_pos = 32*1024):
 
-        self._inode_num = inode_num
-        self._block_num = block_num
-        self._inode_struct_size = inode_struct_size
-        self._block_struct_size = block_struct_size
-        self._inode_map = Bitmap(inode_num)
-        self._block_map = Bitmap(block_num)
+        self._size = 32 * 1024 # Padding for unknown blocks num
         #self._size = self._inode_map._size + self._block_map._size + 7 * 4
-        self._size = 32 * 1024
         self._dir_region_pos = self._size
         self._inode_region_pos = self._dir_region_pos + 4096 * 1024
         self._block_region_pos = self._inode_region_pos + 1024 * 1024
+
+        self._inode_num = inode_num
+        self._inode_struct_size = inode_struct_size
+        self._inode_map = Bitmap(inode_num)
+
+        self._block_num = (100 * 1024 * 1024 - self._block_region_pos) >> 10
+        self._block_struct_size = block_struct_size
+        self._block_map = Bitmap(self._block_num)
+        
     
     def encode_into(self,btarr,offset=0):
         struct.pack_into('I',btarr,offset,self._inode_map._size)
@@ -117,11 +120,14 @@ class Superblock(object):
         return blk
 
 
-class Dir(object):
+class DirItem(object):
     def __init__(self, name="/", inode=0):
         self._name = name
         self._inode = inode
         self._list = []
+
+    def size(self):
+        return 40 + 36 * len(self._list)
 
     def encode_into(self,btarr,offset=0):
         struct.pack_into('32s',btarr,offset,self._name.encode('utf-8'))
@@ -143,7 +149,7 @@ class Dir(object):
         offset += 32
         inode = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        d = Dir(name, inode)
+        d = DirItem(name, inode)
         size = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
         for i in range(size):
@@ -156,24 +162,23 @@ class Dir(object):
 
 
 class INode():
-
-    def __init__(self, premcode="1100", owner=1):  
-        create_time = time.time()
-        self.premcode = premcode      # OwnerRead OwnerWrite OthersRead OthersWrite
-        self.owner = owner         # OwnerId
-        self.create_time = create_time
-        self.access_time = create_time
-        self.modify_time = create_time
-        self.file_size = 0
-        self.direct_block = -1
-        self.primary_index = -1
+    def __init__(self, premcode="1100", uid=0):  
+        current = time.time()
+        self.premcode = premcode  # OwnerRead OwnerWrite OthersRead OthersWrite
+        self.owner = uid        # OwnerId
+        self.create_time = current
+        self.access_time = current
+        self.modify_time = current
+        self.file_size = np.array((0),dtype=np.uint32)
+        self.direct_block = np.array(-1,dtype=np.uint32)
+        self.primary_index = np.array(-1,dtype=np.uint32)
 
     def encode_into(self,btarr,offset=0):
         struct.pack_into('4s',btarr,offset,self.premcode.encode('utf-8'))
         offset += 4
         struct.pack_into('I',btarr,offset,self.owner)
         offset += 4
-        struct.pack_into('f',btarr,offset,self.creat_time)
+        struct.pack_into('f',btarr,offset,self.create_time)
         offset += 4
         struct.pack_into('f',btarr,offset,self.access_time)
         offset += 4
@@ -194,7 +199,7 @@ class INode():
         offset += 4
         iN.owner = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN.creat_time = struct.unpack_from('f',btarr,offset)[0]
+        iN.create_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
         iN.access_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
@@ -204,7 +209,7 @@ class INode():
         offset += 4
         iN.direct_block = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN.primary_index = struct.unpack_from('I',btarr,offset)[0]
+        iN.primary_index = np.array(struct.unpack_from('I',btarr,offset)[0],dtype=np.uint32)
         offset += 4
         return iN
      
@@ -230,45 +235,95 @@ env['path'] = "/"
 class FileSystem(object):
     def __init__(self):
         if os.path.exists('diskfile'):
-            with open('diskfile', 'rb') as df:
-                self._buffer = bytearray(df.read())
-            self._super_block = Superblock.decode_from(self._buffer)
+            _buffer = bytearray(open('diskfile', 'rb').read())
+            self._super_block = Superblock.decode_from(_buffer)
 
             self._dirs = []
             offset = self._super_block._dir_region_pos
+            while True:
+                ditem = DirItem.decode_from(_buffer,offset)
+                if ditem._name == "":
+                    break
+                self._dirs.append(ditem)
+                offset += ditem.size()
             
-            # 循环读目录项
-            self._inodes = []
+            self._inodes = {}
             offset = self._super_block._inode_region_pos
+            for i in range(self._super_block._inode_num):
+                if (self._super_block._inode_map.get(i)):
+                    inode = INode.decode_from(_buffer,offset+i*self._super_block._inode_struct_size)
+                    self._inodes[i] = inode
 
-            self._blocks = []
+            self._blocks = {}
             offset = self._super_block._block_region_pos
-            
+            for i in range(self._super_block._block_num):
+                if (self._super_block._block_map.get(i)):
+                    block = Block.decode_from(_buffer,offset+i*self._super_block._block_struct_size)
+                    self._blocks[i] = block
+
         else:
-            self._buffer = bytearray(100 * 1024 * 1024)
+            _buffer = bytearray(100 * 1024 * 1024)
             self._super_block = Superblock()
-            self._super_block.encode_into(self._buffer)
-            self._dirs, self._inodes, self._blocks = [], [], []
-            # 创建根目录
+            self._super_block.encode_into(_buffer)
+            self._dirs, self._inodes, self._blocks = [], {}, {}
+
+            # Create root
+            inode_id = self._super_block._inode_map.next()
+            ditem = DirItem('/', inode_id)
+            self._dirs.append(ditem)
+
+            inode = INode('1111')
+            self._inodes[inode_id] = inode
+            self.save()
+
+            # Create User Table
 
             # 创建用户记录表
-
-
-            self.save()
+            #inode_id = self._super_block._inode_map.next()
+            #inode = INode('1100')
+            #self._inodes.append(inode)
+            #block_id = self._super_block._block_map.next()
+            #block = Block()
+            #self._blocks.append(block)
 
         self.openings = {}
 
+        #print(self._dirs)
+        #print(self._inodes)
+        #print(self._blocks)
+
     def save(self):
-        with open('diskfile', 'wb') as df:
-            df.write(self._buffer)
+        _buffer = bytearray(100 * 1024 * 1024)
+        self._super_block.encode_into(_buffer)
+
+        offset = self._super_block._dir_region_pos
+        for ditem in self._dirs:
+            offset = ditem.encode_into(_buffer, offset)
+
+        offset = self._super_block._inode_region_pos
+        for k, v in self._inodes.items():
+            v.encode_into(_buffer,offset+k*self._super_block._inode_struct_size)
+
+        offset = self._super_block._block_region_pos
+        for k, v in self._blocks.items():
+            v.encode_into(_buffer,offset+k*self._super_block._block_struct_size)
+
+        open('diskfile', 'wb').write(_buffer)
+
 
     def add_user(self):
         pass
 
-    def create_file(self):
-        pass
+    def create_file(self, name):
+        filepath = "/" + name if env['path'] == '/' else env['path'] + "/" + name
+        for ditem in self._dirs:
+            if ditem._name == env['path']:
+                pass
+                #ditem.
+        #pass
 
-    def delete_file(self):
+    def delete_file(self, path):
+
         pass
     
     def open_file(self):
