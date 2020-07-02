@@ -51,6 +51,7 @@ class Superblock(object):
         inode_struct_size=32,
         block_struct_size=1024,
         dir_region_pos = 32*1024):
+        
         self._inode_num = inode_num
         self._block_num = block_num
         self._inode_struct_size = inode_struct_size
@@ -187,27 +188,89 @@ class INode():
 class Block(object):
     pass
 
-def logout():
-    env['user'] = 'guest'
-
 env = {}
 env['user'] = "guest"
 env['path'] = "/"
-
-func = {}
-func['exit'] = exit
-func['echo'] = print
-func['logout'] = logout
-
-buffer = b''
 
 class FileSystem(object):
     def __init__(self,buffer=None):
         if buffer:
             self._super_block = Superblock.decode_from(buffer)
+            self._dirs = []
+            offset = self._super_block._dir_region_pos
+            # 循环读目录项
+            self._inodes = []
+            offset = self._super_block._inode_region_pos
 
+            self._blocks = []
+            offset = self._super_block._block_region_pos
+        else:
+            self._super_block = Superblock()
+            self._dirs, self._inodes, self._blocks = [], [], []
+
+        self.openings = {}
+
+    def create_usertable(self):
+        pass
+
+    def add_user(self):
+        pass
+
+    def create_file(self):
+        pass
+
+    def delete_file(self):
+        pass
+    
+    def open_file(self):
+        pass
+
+    def close_file(self):
+        pass
+
+    def test_perm(self):
+        pass
+
+    def get_uid(self):
+        pass
+
+    def login(self):
+        pass
+
+    def logout(self):
+        env['user'] = 'guest'
+
+    def read_file(self):
+        pass
+
+    def write_file(self):
+        pass
+
+    def copy_file(self):
+        pass
+
+    def change_dir(self):
+        pass
+
+    def list_dir(self):
+        pass
 
 fsys = FileSystem()
+
+func = {}
+func['exit'] = exit
+func['echo'] = print
+func['login'] = fsys.login
+func['logout'] = fsys.logout
+func['open'] = fsys.open_file
+func['close'] = fsys.close_file
+func['create'] = fsys.create_file
+func['delete'] = fsys.delete_file
+func['read'] = fsys.read_file
+func['write'] = fsys.write_file
+func['copy'] = fsys.copy_file
+func['cd'] = fsys.change_dir
+func['dir'] = func['ls'] = fsys.list_dir
 
 def init():
     if os.path.exists('diskfile'):
@@ -217,10 +280,6 @@ def init():
         buffer = bytearray(100 * 1024 * 1024) # 100MB = 100 * 1024 * 
         with open('diskfile', 'wb') as df:
             df.write(buffer)
-
-
-def load_superblock():
-    superblock = ''
 
 def main():
     init()
