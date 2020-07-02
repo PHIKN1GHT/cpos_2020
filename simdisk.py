@@ -1,7 +1,6 @@
 import os, math, struct
 import numpy as np
-import time
-import struct
+import time 
 
 class Bitmap(object):
     def __init__(self, n):
@@ -157,19 +156,11 @@ class Dir(object):
 
 
 class INode():
-    premcode = ""
-    owner = ""
-    create_time = ""
-    access_time = ""
-    modify_time = ""
-    file_size = ""
-    direct_block = ""
-    primary_index = ""
 
-    def __init__(self,owner):  
+    def __init__(self, premcode="1100", owner=1):  
         create_time = time.time()
-        self.premcode = 1      # 1User 0other
-        self.owner = 1         # 1Owner  0other
+        self.premcode = premcode      # OwnerRead OwnerWrite OthersRead OthersWrite
+        self.owner = owner         # OwnerId
         self.create_time = create_time
         self.access_time = create_time
         self.modify_time = create_time
@@ -178,7 +169,7 @@ class INode():
         self.primary_index = -1
 
     def encode_into(self,btarr,offset=0):
-        struct.pack_into('I',btarr,offset,self.premcode)
+        struct.pack_into('4s',btarr,offset,self.premcode.encode('utf-8'))
         offset += 4
         struct.pack_into('I',btarr,offset,self.owner)
         offset += 4
@@ -195,25 +186,27 @@ class INode():
         struct.pack_into('I',btarr,offset,self.primary_index)
         offset += 4
         return offset
-        
+
+    @classmethod        
     def decode_from(self,btarr,offset=0):
-        self.premcode = struct.unpack_from('I',btarr,offset)[0]
+        iN = INode()
+        iN.premcode = struct.unpack_from('4s',btarr,offset)[0].decode('utf-8').strip(b'\x00'.decode())
         offset += 4
-        self.owner = struct.unpack_from('I',btarr,offset)[0]
+        iN.owner = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        self.creat_time = struct.unpack_from('f',btarr,offset)[0]
+        iN.creat_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        self.access_time = struct.unpack_from('f',btarr,offset)[0]
+        iN.access_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        self.modify_time = struct.unpack_from('f',btarr,offset)[0]
+        iN.modify_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        self.file_size = struct.unpack_from('I',btarr,offset)[0]
+        iN.file_size = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        self.direct_block = struct.unpack_from('I',btarr,offset)[0]
+        iN.direct_block = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        self.primary_index = struct.unpack_from('I',btarr,offset)[0]
+        iN.primary_index = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        return offset
+        return iN
      
 
 class Block(object):
