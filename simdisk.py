@@ -154,6 +154,7 @@ class Dir(object):
             d._list.append({"name":name,'inode':inode})
         return d
 
+
 class INode():
     premcode = ""
     owner = ""
@@ -164,25 +165,55 @@ class INode():
     direct_block = ""
     primary_index = ""
 
-    # create new file
-    def __init__(self,owner): 
-        now_time = time.time()
-        create_time = self.packed(now_time)
-        self.premcode = 1                    # 1User 0notUser
-        self.owner = self.packed(owner)      # If not packed
+    def __init__(self,owner):  
+        create_time = time.time()
+        self.premcode = 1      # 1User 0other
+        self.owner = 1         # 1Owner  0other
         self.create_time = create_time
         self.access_time = create_time
         self.modify_time = create_time
-        self.file_size = self.packed(0)
-        self.direct_block = self.packed(-1)
-        self.primary_index = self.packed(-1)
+        self.file_size = 0
+        self.direct_block = -1
+        self.primary_index = -1
 
-    def packed(self,obj): 
-        return struct.pack("f",obj)
-
-    def unpacked(self,obj): 
-        return struct.unpack("f",obj)
-
+    def encode_into(self,btarr,offset=0):
+        struct.pack_into('I',btarr,offset,self.premcode)
+        offset += 4
+        struct.pack_into('I',btarr,offset,self.owner)
+        offset += 4
+        struct.pack_into('f',btarr,offset,self.creat_time)
+        offset += 4
+        struct.pack_into('f',btarr,offset,self.access_time)
+        offset += 4
+        struct.pack_into('f',btarr,offset,self.modify_time)
+        offset += 4
+        struct.pack_into('I',btarr,offset,self.file_size)
+        offset += 4
+        struct.pack_into('I',btarr,offset,self.direct_block)
+        offset += 4
+        struct.pack_into('I',btarr,offset,self.primary_index)
+        offset += 4
+        return offset
+        
+    def decode_from(self,btarr,offset=0):
+        self.premcode = struct.unpack_from('I',btarr,offset)[0]
+        offset += 4
+        self.owner = struct.unpack_from('I',btarr,offset)[0]
+        offset += 4
+        self.creat_time = struct.unpack_from('f',btarr,offset)[0]
+        offset += 4
+        self.access_time = struct.unpack_from('f',btarr,offset)[0]
+        offset += 4
+        self.modify_time = struct.unpack_from('f',btarr,offset)[0]
+        offset += 4
+        self.file_size = struct.unpack_from('I',btarr,offset)[0]
+        offset += 4
+        self.direct_block = struct.unpack_from('I',btarr,offset)[0]
+        offset += 4
+        self.primary_index = struct.unpack_from('I',btarr,offset)[0]
+        offset += 4
+        return offset
+     
 
 class Block(object):
     pass
