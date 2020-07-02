@@ -1,4 +1,4 @@
-import os, math, struct
+import os, math, struct, time, json
 import numpy as np
 import time 
 
@@ -162,54 +162,54 @@ class DirItem(object):
 
 
 class INode():
-    def __init__(self, premcode="1100", uid=0):  
+    def __init__(self, perm="1100", uid=0):  
         current = time.time()
-        self.premcode = premcode  # OwnerRead OwnerWrite OthersRead OthersWrite
-        self.owner = uid        # OwnerId
-        self.create_time = current
-        self.access_time = current
-        self.modify_time = current
-        self.file_size = np.array((0),dtype=np.uint32)
-        self.direct_block = np.array(-1,dtype=np.uint32)
-        self.primary_index = np.array(-1,dtype=np.uint32)
+        self._perm = perm  # OwnerRead OwnerWrite OthersRead OthersWrite
+        self._owner = uid        # OwnerId
+        self._create_time = current
+        self._access_time = current
+        self._modify_time = current
+        self._size = np.array((0),dtype=np.uint32)
+        self._block = np.array(-1,dtype=np.uint32)
+        self._index = np.array(-1,dtype=np.uint32)
 
     def encode_into(self,btarr,offset=0):
-        struct.pack_into('4s',btarr,offset,self.premcode.encode('utf-8'))
+        struct.pack_into('4s',btarr,offset,self._perm.encode('utf-8'))
         offset += 4
-        struct.pack_into('I',btarr,offset,self.owner)
+        struct.pack_into('I',btarr,offset,self._owner)
         offset += 4
-        struct.pack_into('f',btarr,offset,self.create_time)
+        struct.pack_into('f',btarr,offset,self._create_time)
         offset += 4
-        struct.pack_into('f',btarr,offset,self.access_time)
+        struct.pack_into('f',btarr,offset,self._access_time)
         offset += 4
-        struct.pack_into('f',btarr,offset,self.modify_time)
+        struct.pack_into('f',btarr,offset,self._modify_time)
         offset += 4
-        struct.pack_into('I',btarr,offset,self.file_size)
+        struct.pack_into('I',btarr,offset,self._size)
         offset += 4
-        struct.pack_into('I',btarr,offset,self.direct_block)
+        struct.pack_into('I',btarr,offset,self._block)
         offset += 4
-        struct.pack_into('I',btarr,offset,self.primary_index)
+        struct.pack_into('I',btarr,offset,self._index)
         offset += 4
         return offset
 
     @classmethod        
     def decode_from(self,btarr,offset=0):
         iN = INode()
-        iN.premcode = struct.unpack_from('4s',btarr,offset)[0].decode('utf-8').strip(b'\x00'.decode())
+        iN._perm = struct.unpack_from('4s',btarr,offset)[0].decode('utf-8').strip(b'\x00'.decode())
         offset += 4
-        iN.owner = struct.unpack_from('I',btarr,offset)[0]
+        iN._owner = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN.create_time = struct.unpack_from('f',btarr,offset)[0]
+        iN._create_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        iN.access_time = struct.unpack_from('f',btarr,offset)[0]
+        iN._access_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        iN.modify_time = struct.unpack_from('f',btarr,offset)[0]
+        iN._modify_time = struct.unpack_from('f',btarr,offset)[0]
         offset += 4
-        iN.file_size = struct.unpack_from('I',btarr,offset)[0]
+        iN._size = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN.direct_block = struct.unpack_from('I',btarr,offset)[0]
+        iN._block = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN.primary_index = np.array(struct.unpack_from('I',btarr,offset)[0],dtype=np.uint32)
+        iN._index = np.array(struct.unpack_from('I',btarr,offset)[0],dtype=np.uint32)
         offset += 4
         return iN
      
@@ -225,7 +225,7 @@ class Block(object):
     @classmethod
     def decode_from(cls,btarr,offset=0):
         b = Block()
-        b._bytes = struct.unpack_from(str(b._size)+'s',btarr,offset)[0]
+        b._bytes = bytearray(struct.unpack_from(str(b._size)+'s',btarr,offset)[0])
         return b
 
 env = {}
@@ -261,6 +261,10 @@ class FileSystem(object):
                     block = Block.decode_from(_buffer,offset+i*self._super_block._block_struct_size)
                     self._blocks[i] = block
 
+            exi, inode_id = self._find("accounts")
+            if exi:
+                self._usertable = json.loads(self.read_file("accounts", False))
+
         else:
             _buffer = bytearray(100 * 1024 * 1024)
             self._super_block = Superblock()
@@ -286,11 +290,11 @@ class FileSystem(object):
             #block = Block()
             #self._blocks.append(block)
 
-        self.openings = {}
-
-        #print(self._dirs)
-        #print(self._inodes)
-        #print(self._blocks)
+        self._openings = {}
+        self._usertable = {
+            'system': 0,
+            'guest': 1
+        }
 
     def save(self):
         _buffer = bytearray(100 * 1024 * 1024)
@@ -310,45 +314,149 @@ class FileSystem(object):
 
         open('diskfile', 'wb').write(_buffer)
 
-
-    def add_user(self):
-        pass
-
-    def create_file(self, name):
-        filepath = "/" + name if env['path'] == '/' else env['path'] + "/" + name
+    def _find(self, name):
         for ditem in self._dirs:
             if ditem._name == env['path']:
-                pass
-                #ditem.
-        #pass
+                inode_id = [i['inode'] for i in ditem._list if i['name'] == name]
+                if not inode_id:
+                    return False, None
+                else:
+                    return True, inode_id[0]
 
-    def delete_file(self, path):
+    def create_file(self, name):
+        exi, inode_id = self._find(name)
+        if exi:
+            print('File already exists:' + name)
+            return
 
-        pass
+        for ditem in self._dirs:
+            if ditem._name == env['path']:
+                inode_id = self._super_block._inode_map.next()
+                inode = INode('1100',self._usertable[env['user']])
+                self._inodes[inode_id] = inode
+                ditem._list.append({'name':name, 'inode':inode_id})
+                self.save()
+                return inode_id
+
+    def write_file(self, name, data):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+            return
+
+        inode = self._inodes[inode_id]
+        inode._modify_time = time.time()
+        if inode._size > 0:
+            block = self._blocks[inode._block]
+        else:
+            block_id = self._super_block._block_map.next()
+            inode._block = block_id
+            block = self._blocks[block_id] = Block()
+        struct.pack_into(str(len(data))+'s',block._bytes,inode._size,data.encode('utf-8'))
+        inode._size += np.array(len(data),dtype=np.uint32)
+        self.save()
+
+    def read_file(self, name, echo=True):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+            return
+
+        inode = self._inodes[inode_id]
+        inode._access_time = time.time()
+        if inode._size > 0:
+            block = self._blocks[inode._block]
+            data = struct.unpack_from(str(inode._size)+'s',block._bytes)[0].decode('utf-8')
+            if echo:
+                print(data)
+            else:
+                return data
+        else:
+            print('Empty file.')
+        self.save()
     
-    def open_file(self):
+    def list_dir(self):
+        uid2user = dict([(v,k) for (k,v) in self._usertable.items()])
+        mask = '{:<16}{:<8}{:>8}{:>8}{:>20}{:>20}{:>20}'
+        tmask = '%y-%m-%d %H:%M:%S'
+        print(mask.format('filename', 'owner', 'perms', 'size', 'create', 'access', 'modify'))
+        print('='*100)
+        for ditem in self._dirs:
+            inode = self._inodes[ditem._inode]
+            ctime = time.strftime(tmask, time.localtime(inode._create_time))
+            atime = time.strftime(tmask, time.localtime(inode._access_time))
+            mtime = time.strftime(tmask, time.localtime(inode._modify_time))
+            print(mask.format(ditem._name, uid2user[inode._owner], inode._perm, inode._size,ctime, atime, mtime))
+
+            for fitem in ditem._list:
+                inode = self._inodes[fitem['inode']]
+                ctime = time.strftime(tmask, time.localtime(inode._create_time))
+                atime = time.strftime(tmask, time.localtime(inode._access_time))
+                mtime = time.strftime(tmask, time.localtime(inode._modify_time))
+                fname = (ditem._name + '/' + fitem['name']).replace('//','/')
+                print(mask.format(fname, uid2user[inode._owner], inode._perm, inode._size,ctime, atime, mtime))
+
+    def delete_file(self, name):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+            return
+
+        if inode_id in self._openings.keys() and len(self._openings[inode_id]) > 0:
+            print('Failed, opening by {} user(s).'.format(len(self._openings[inode_id])))
+            return
+        else:
+            for ditem in self._dirs:
+                if ditem._name == env['path']:
+                    inode = self._inodes[inode_id]
+                    if inode._size > 0:
+                        self._super_block._block_map.flip(inode._block)
+                    self._super_block._inode_map.flip(inode_id)
+                    ditem._list = [l for l in ditem._list if l['name'] != name]
+                    self.save()
+
+    def open_file(self, name):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+            return
+        uid = self._usertable[env['user']]
+        if inode_id in self._openings.keys():
+            self._openings[inode_id].add(uid)
+        else:
+            self._openings[inode_id]=set([uid])
+
+    def close_file(self, name):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+            return
+        uid = self._usertable[env['user']]
+        if inode_id in self._openings.keys():
+            self._openings[inode_id].remove(uid)
+
+    def add_user(self, name):
+        exi, inode_id = self._find("accounts")
+        if exi:
+            self._openings[inode_id] = set()
+            self.delete_file('accounts')
+        self.create_file('accounts')
+        nuid = max([self._usertable[v] for v in self._usertable.keys()]) + 1
+        self._usertable[name] = nuid
+        self.write_file('accounts', json.dumps(self._usertable))
+        self.save()
+
+    def test_perm(self, perm):
         pass
 
-    def close_file(self):
-        pass
-
-    def test_perm(self):
-        pass
-
-    def get_uid(self):
-        pass
-
-    def login(self):
-        pass
+    def login(self, name):
+        if name in self._usertable.keys():
+            env['user'] = name
+        else:
+            print("Unknown username:",name)
 
     def logout(self):
         env['user'] = 'guest'
-
-    def read_file(self):
-        pass
-
-    def write_file(self):
-        pass
 
     def copy_file(self):
         pass
@@ -356,14 +464,14 @@ class FileSystem(object):
     def change_dir(self):
         pass
 
-    def list_dir(self):
-        pass
+
 
 fsys = FileSystem()
 
 func = {}
 func['exit'] = exit
 func['echo'] = print
+func['adduser'] = fsys.add_user
 func['login'] = fsys.login
 func['logout'] = fsys.logout
 func['open'] = fsys.open_file
@@ -379,16 +487,28 @@ func['dir'] = func['ls'] = fsys.list_dir
 def main():
     while True:
         print("{}@simdisk {} $ ".format(env['user'], env['path']), end="")
-        cmd = input().split(' ')
+        cmd = input().strip().split(' ')
         if cmd[0] == '':
             continue
         if not cmd[0] in func.keys():
             print("Unknown command: {}".format(cmd[0]))
             continue
+        '''
         if len(cmd) > 1:
             func[cmd[0]](*cmd[1:])
         else:
             func[cmd[0]]()
+        '''
+        try:
+            if len(cmd) > 1:
+                func[cmd[0]](*cmd[1:])
+            else:
+                func[cmd[0]]()
+        except BaseException as e:
+            if type(e) == SystemExit:
+                exit()
+            print('Failed:', e)
+
 
 if __name__ == "__main__":
     main()
