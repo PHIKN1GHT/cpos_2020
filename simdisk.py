@@ -169,9 +169,9 @@ class INode():
         self._create_time = current
         self._access_time = current
         self._modify_time = current
-        self._size = np.array((0),dtype=np.uint32)
-        self._block = np.array(-1,dtype=np.uint32)
-        self._index = np.array(-1,dtype=np.uint32)
+        self._size = 0
+        self._block = 0
+        self._index = 0
 
     def encode_into(self,btarr,offset=0):
         struct.pack_into('4s',btarr,offset,self._perm.encode('utf-8'))
@@ -209,7 +209,7 @@ class INode():
         offset += 4
         iN._block = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
-        iN._index = np.array(struct.unpack_from('I',btarr,offset)[0],dtype=np.uint32)
+        iN._index = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
         return iN
      
@@ -264,6 +264,8 @@ class FileSystem(object):
             exi, inode_id = self._find("accounts")
             if exi:
                 self._usertable = json.loads(self.read_file("accounts", False))
+            else:
+                self._usertable = {}
 
         else:
             _buffer = bytearray(100 * 1024 * 1024)
@@ -278,6 +280,7 @@ class FileSystem(object):
 
             inode = INode('1111')
             self._inodes[inode_id] = inode
+            self._usertable = {}
             self.save()
 
         self._openings = {}
@@ -310,6 +313,14 @@ class FileSystem(object):
                     return False, None
                 else:
                     return True, inode_id[0]
+
+    def test_perm(self, name, perm):
+        exi, inode_id = self._find(name)
+        if not exi:
+            print('File not found :' + name)
+        inode = self._inodes[inode_id]
+
+
 
     def create_file(self, name):
         exi, inode_id = self._find(name)
@@ -433,9 +444,6 @@ class FileSystem(object):
         self._usertable[name] = nuid
         self.write_file('accounts', json.dumps(self._usertable))
         self.save()
-
-    def test_perm(self, name, perm):
-        pass
 
     def login(self, name):
         if name in self._usertable.keys():
