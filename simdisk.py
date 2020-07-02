@@ -99,6 +99,9 @@ class Superblock(object):
         for i in range(map_size):
             blk._inode_map._map[i] = struct.unpack_from('I',btarr,offset)[0]
             offset += 4
+        for i in range(blk._inode_num):
+            if blk._inode_map.get(i):
+                blk._inode_map._used += 1
         blk._inode_region_pos = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
         blk._inode_struct_size = struct.unpack_from('I',btarr,offset)[0]
@@ -109,6 +112,9 @@ class Superblock(object):
         for i in range(map_size):
             blk._block_map._map[i] = struct.unpack_from('I',btarr,offset)[0]
             offset += 4
+        for i in range(blk._block_num):
+            if blk._block_map.get(i):
+                blk._block_map._used += 1
         blk._block_region_pos = struct.unpack_from('I',btarr,offset)[0]
         offset += 4
         blk._block_struct_size = struct.unpack_from('I',btarr,offset)[0]
@@ -234,6 +240,10 @@ env['path'] = "/"
 
 class FileSystem(object):
     def __init__(self):
+        self._openings = {}
+        self._usertable = {}
+        self._usertable['system'] = 0
+        self._usertable['guest'] = 1
         if os.path.exists('diskfile'):
             _buffer = bytearray(open('diskfile', 'rb').read())
             self._super_block = Superblock.decode_from(_buffer)
@@ -263,10 +273,9 @@ class FileSystem(object):
 
             exi, inode_id = self._find("accounts")
             if exi:
+                env['user'] = 'system'
                 self._usertable = json.loads(self.read_file("accounts", False))
-            else:
-                self._usertable = {}
-
+                env['user'] = 'guest'
         else:
             _buffer = bytearray(100 * 1024 * 1024)
             self._super_block = Superblock()
@@ -278,14 +287,9 @@ class FileSystem(object):
             ditem = DirItem('/', inode_id)
             self._dirs.append(ditem)
 
-            inode = INode('1111')
+            inode = INode()
             self._inodes[inode_id] = inode
-            self._usertable = {}
             self.save()
-
-        self._openings = {}
-        self._usertable['system'] = 0
-        self._usertable['guest'] = 1
 
     def save(self):
         _buffer = bytearray(100 * 1024 * 1024)
@@ -314,20 +318,43 @@ class FileSystem(object):
                 else:
                     return True, inode_id[0]
 
-    def test_perm(self, name, perm):
-        exi, inode_id = self._find(name)
-        if not exi:
-            print('File not found :' + name)
-        inode = self._inodes[inode_id]
+    def _find_dir(self, name):
+        for ditem in self._dirs:
+            if ditem._name == name:
+                return ditem._inode
+        return None
 
-
+    def test_perm(self, uname, inode, read=False,write=False):
+        fuid = inode._owner
+        owner = False
+        if uname in self._usertable.keys():
+            owner = True if self._usertable[uname] == inode._owner else False
+        result = True
+        if owner:
+            if read:
+                result &= inode._perm[0] == '1'
+            if write:
+                result &= inode._perm[1] == '1'
+        else:
+            if read:
+                result &= inode._perm[2] == '1'
+            if write:
+                result &= inode._perm[3] == '1'
+        return result
 
     def create_file(self, name):
+        # 检查当前目录的写权限
+        dinode = self._inodes[self._find_dir(env['path'])]
+        perm = self.test_perm(env['user'],dinode,write=True)
+        if not perm:
+            print("Permission denied.")
+            return
+
         exi, inode_id = self._find(name)
         if exi:
             print('File already exists:' + name)
             return
-
+        
         for ditem in self._dirs:
             if ditem._name == env['path']:
                 inode_id = self._super_block._inode_map.next()
@@ -344,6 +371,11 @@ class FileSystem(object):
             return
 
         inode = self._inodes[inode_id]
+        perm = self.test_perm(env['user'],inode,write=True)
+        if not perm:
+            print("Permission denied.")
+            return
+
         inode._modify_time = time.time()
         if inode._size > 0:
             block = self._blocks[inode._block]
@@ -362,6 +394,11 @@ class FileSystem(object):
             return
 
         inode = self._inodes[inode_id]
+        perm = self.test_perm(env['user'],inode,read=True)
+        if not perm:
+            print("Permission denied.")
+            return
+
         inode._access_time = time.time()
         if inode._size > 0:
             block = self._blocks[inode._block]
@@ -376,26 +413,36 @@ class FileSystem(object):
     
     def list_dir(self):
         uid2user = dict([(v,k) for (k,v) in self._usertable.items()])
-        mask = '{:<16}{:<8}{:>8}{:>8}{:>20}{:>20}{:>20}'
+        mask = '{:<16}{:<8}{:>8}{:>8}{:>20}{:>20}{:>20}{:>12}'
         tmask = '%y-%m-%d %H:%M:%S'
-        print(mask.format('filename', 'owner', 'perms', 'size', 'create', 'access', 'modify'))
-        print('='*100)
+        print(mask.format('filename', 'owner', 'perms', 'size', 'create', 'access', 'modify', 'phys_addr'))
+        print('='*112)
         for ditem in self._dirs:
-            inode = self._inodes[ditem._inode]
-            ctime = time.strftime(tmask, time.localtime(inode._create_time))
-            atime = time.strftime(tmask, time.localtime(inode._access_time))
-            mtime = time.strftime(tmask, time.localtime(inode._modify_time))
-            print(mask.format(ditem._name, uid2user[inode._owner], inode._perm, inode._size,ctime, atime, mtime))
-
-            for fitem in ditem._list:
-                inode = self._inodes[fitem['inode']]
+            if ditem._name == env['path']:
+                inode = self._inodes[ditem._inode]
                 ctime = time.strftime(tmask, time.localtime(inode._create_time))
                 atime = time.strftime(tmask, time.localtime(inode._access_time))
                 mtime = time.strftime(tmask, time.localtime(inode._modify_time))
-                fname = (ditem._name + '/' + fitem['name']).replace('//','/')
-                print(mask.format(fname, uid2user[inode._owner], inode._perm, inode._size,ctime, atime, mtime))
+                addr = ""
+                print(mask.format(ditem._name, uid2user[inode._owner], inode._perm, "Folder",ctime, atime, mtime, addr))
+
+                for fitem in ditem._list:
+                    inode = self._inodes[fitem['inode']]
+                    ctime = time.strftime(tmask, time.localtime(inode._create_time))
+                    atime = time.strftime(tmask, time.localtime(inode._access_time))
+                    mtime = time.strftime(tmask, time.localtime(inode._modify_time))
+                    fname = (ditem._name + '/' + fitem['name']).replace('//','/')
+                    (size, addr) = ("Folder", '') if self._find_dir(fname) else (inode._size, self._super_block._block_region_pos + self._super_block._block_struct_size * inode._block)
+                    print(mask.format(fname, uid2user[inode._owner], inode._perm, size,ctime, atime, mtime, addr))
 
     def delete_file(self, name):
+        # 检查当前目录的写权限
+        dinode = self._inodes[self._find_dir(env['path'])]
+        perm = self.test_perm(env['user'],dinode,write=True)
+        if not perm:
+            print("Permission denied.")
+            return
+    
         exi, inode_id = self._find(name)
         if not exi:
             print('File not found :' + name)
@@ -419,6 +466,13 @@ class FileSystem(object):
         if not exi:
             print('File not found :' + name)
             return
+
+        inode = self._inodes[inode_id]
+        perm = self.test_perm(env['user'],inode,read=True)
+        if not perm:
+            print("Permission denied.")
+            return
+
         uid = self._usertable[env['user']]
         if inode_id in self._openings.keys():
             self._openings[inode_id].add(uid)
@@ -435,6 +489,8 @@ class FileSystem(object):
             self._openings[inode_id].remove(uid)
 
     def add_user(self, name):
+        user = env['user']
+        self.login('system')
         exi, inode_id = self._find("accounts")
         if exi:
             self._openings[inode_id] = set()
@@ -443,6 +499,18 @@ class FileSystem(object):
         nuid = max([self._usertable[v] for v in self._usertable.keys()]) + 1
         self._usertable[name] = nuid
         self.write_file('accounts', json.dumps(self._usertable))
+
+        inode_id = self._super_block._inode_map.next()
+        self._dirs.append(DirItem('/'+name, inode_id))
+        inode = INode()
+        inode._owner = nuid
+        self._inodes[inode_id] = inode
+
+        for ditem in self._dirs:
+            if ditem._name == '/':
+                ditem._list.append({'name':name,'inode':inode_id})
+
+        self.login(user)
         self.save()
 
     def login(self, name):
@@ -468,16 +536,48 @@ class FileSystem(object):
         self.create_file(dst)
         self.write_file(dst,self.read_file(src,False))
 
-    def change_dir(self):
-        pass
-
-
+    def change_dir(self, name):
+        if name == '..':
+            env['path'] = '/'
+            return
+        else:
+            if self._find_dir('/'+name):
+                dinode = self._inodes[self._find_dir('/'+name)]
+                perm = self.test_perm(env['user'],dinode,read=True)
+                if not perm:
+                    print("Permission denied.")
+                    return
+                env['path'] = '/'+name
+                return
+        print("Folder not found:",name)
+    
+    def info(self):
+        print('Simple Filesystem ver 1.0')
+        print('{:<24}{:<24}{:<24}{:<24}'.format(
+            'SuperblockSize: {}B'.format(self._super_block._size),
+            'DirItemsSize: {}B'.format(self._super_block._inode_region_pos - self._super_block._dir_region_pos),
+            'INodeSize: {}B'.format(self._super_block._inode_struct_size),
+            'BlockSize: {}B'.format(self._super_block._block_struct_size),
+            ))
+        print('{:<24}{:<24}{:<24}{:<24}'.format(
+            'DirNum: {}'.format(len(self._dirs)),
+            'INodeNum: {}'.format(self._super_block._inode_map._used),
+            'BlockNum: {}'.format(self._super_block._block_map._used),
+            'FileNum: {}'.format(self._super_block._inode_map._used - len(self._dirs))
+            ))
+        print('{:<24}{:<24}'.format(
+            'MaxFile: {}'.format(min(self._super_block._inode_map._total,self._super_block._block_map._total)),
+            'BiggestFile: {}B'.format(1024 + 1024 << 8),
+            'UsedSpace: {}%'.format(int(self._super_block._block_map._used / self._super_block._block_map._total * 100)),
+            ))
+        print()
 
 fsys = FileSystem()
 
 func = {}
 func['exit'] = exit
 func['echo'] = print
+func['info'] = fsys.info
 func['adduser'] = fsys.add_user
 func['login'] = fsys.login
 func['logout'] = fsys.logout
