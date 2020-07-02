@@ -1,5 +1,7 @@
 import os, math, struct
 import numpy as np
+import time
+import struct
 
 class Bitmap(object):
     def __init__(self, n):
@@ -152,14 +154,34 @@ class Dir(object):
             d._list.append({"name":name,'inode':inode})
         return d
 
-class INode(object):
+class INode():
     premcode = ""
     owner = ""
     create_time = ""
     access_time = ""
     modify_time = ""
     file_size = ""
-    pass
+    direct_block = ""
+    primary_index = ""
+
+    # create new file
+    def __init__(self,owner): 
+        now_time = time.time()
+        create_time = self.packed(now_time)
+        self.premcode = 1                    # 1User 0notUser
+        self.owner = self.packed(owner)      # If not packed
+        self.create_time = create_time
+        self.access_time = create_time
+        self.modify_time = create_time
+        self.file_size = self.packed(0)
+        self.direct_block = self.packed(-1)
+        self.primary_index = self.packed(-1)
+
+    def packed(self,obj): 
+        return struct.pack("f",obj)
+
+    def unpacked(self,obj): 
+        return struct.unpack("f",obj)
 
 
 class Block(object):
